@@ -2,12 +2,15 @@
 PREFIX ?= /usr
 # Nombre del crate
 CRATE=curp_verifier
-NAME=curp-verifier
+NAME=libcurp-verifier0
 EXT=$(shell uname | grep -q Darwin && echo dylib || echo so)
 TARGET=target/release/lib$(CRATE).$(EXT)
+TARGET_ARM=target/aarch64-unknown-linux-gnu/release/lib$(CRATE).$(EXT)
 HEADER=include/$(CRATE).h
 TEMPLATE=packaging/deb/control
 REVISION=2+rafex
+LIB_CURP=libcurp_verifier
+LIB_CURP_VERSION=$(LIB_CURP).so.0.1.1
 # FULL_VERSION=$(VERSION)-$(REVISION)  # Eliminado según instrucciones
 
 .PHONY: all build clean cbindgen install install-tools
@@ -46,24 +49,36 @@ package-deb:
 	fi
 	@echo "📦 Empaquetando para arquitectura: $(ARCH)"
 	mkdir -p deb_pkg/usr/lib
-	chown -R 0:0 deb_pkg
 	@if [ "$(ARCH)" = "arm64" ]; then \
-		cargo build --release --target aarch64-unknown-linux-gnu; \
-		cp target/aarch64-unknown-linux-gnu/release/lib$(CRATE).$(EXT) deb_pkg/usr/lib/; \
+		RUSTFLAGS="-C link-arg=-Wl,-soname,$(LIB_CURP).so.0" cargo build --release --target aarch64-unknown-linux-gnu; \
+		cp $(TARGET_ARM) deb_pkg/usr/lib/$(LIB_CURP_VERSION); \
+		tree deb_pkg; \
+		aarch64-linux-gnu-strip deb_pkg/usr/lib/$(LIB_CURP_VERSION); \
 	else \
-		cargo build --release; \
-		cp $(TARGET) deb_pkg/usr/lib/; \
+		RUSTFLAGS="-C link-arg=-Wl,-soname,$(LIB_CURP).so.0" cargo build --release; \
+		cp $(TARGET) deb_pkg/usr/lib/$(LIB_CURP_VERSION); \
+		tree deb_pkg; \
+		strip deb_pkg/usr/lib/$(LIB_CURP_VERSION); \
 	fi
+
+	ln -sf $(LIB_CURP_VERSION) deb_pkg/usr/lib/$(LIB_CURP).so.0
+	ln -sf $(LIB_CURP).so.0 deb_pkg/usr/lib/$(LIB_CURP).so
+	tree deb_pkg
 
 	mkdir -p deb_pkg/usr/include
 	mkdir -p deb_pkg/DEBIAN
 	cp $(HEADER) deb_pkg/usr/include/
 	mkdir -p packaging/deb/$(ARCH)
-
+	
 	mkdir -p deb_pkg/usr/share/doc/$(NAME)
 	gzip -c README.md > deb_pkg/usr/share/doc/$(NAME)/README.md.gz
-	cp packaging/deb/$(ARCH)/changelog deb_pkg/usr/share/doc/$(NAME)/changelog
-	gzip -c packaging/deb/$(ARCH)/changelog > deb_pkg/usr/share/doc/$(NAME)/changelog.Debian.gz
+	gzip -9 -c packaging/deb/$(ARCH)/changelog > deb_pkg/usr/share/doc/$(NAME)/changelog.Debian.gz
+	cp packaging/deb/copyright deb_pkg/usr/share/doc/$(NAME)/copyright
+	cp packaging/deb/post* deb_pkg/DEBIAN/.
+	chmod 0755 deb_pkg/DEBIAN/postinst deb_pkg/DEBIAN/postrm
+	cp packaging/deb/triggers deb_pkg/DEBIAN/triggers;
+	cp packaging/deb/shlibs deb_pkg/DEBIAN/shlibs
+	chmod 0644 deb_pkg/usr/lib/$(LIB_CURP_VERSION)
 
 	@VERSION=$$(grep "^version" Cargo.toml | head -n1 | cut -d'"' -f2); \
 	FULL_VERSION=$${VERSION}-$(REVISION); \
@@ -78,14 +93,15 @@ package-deb:
 	        s|{{SECTION}}|libs|g; \
 	        s|{{RUNTIME_DEPENDENCIES}}|$$DEPENDS|g; \
 	        s|{{HOMEPAGE}}|https://github.com/rafex/my-repository/tree/main/src/rust/$(CRATE)|g; \
-	        s|{{SUMMARY}}|Biblioteca Rust para validar CURP|g; \
-	        s|{{DESCRIPTION}}|Biblioteca ligera desarrollada en Rust para verificar CURP conforme al instructivo oficial del RENAPO.|g" $$FINAL; \
+	        s|{{SUMMARY}}|Validador CURP|g; \
+	        s|{{DESCRIPTION}}|Verificar CURP conforme al instructivo oficial del RENAPO.|g" $$FINAL; \
 	cp $$FINAL deb_pkg/DEBIAN/control; \
 	echo "📄 Control final generado:" && cat $$FINAL; \
 	SIZE=$$(du -ks deb_pkg/usr | cut -f1); \
 	echo "Installed-Size: $$SIZE" >> deb_pkg/DEBIAN/control; \
 	echo "📄 Control final generado:" && cat deb_pkg/DEBIAN/control; \
-	dpkg-deb --build deb_pkg "$(NAME)_$${FULL_VERSION}_$${ARCH}.deb"; \
+	fakeroot dpkg-deb --build deb_pkg "$(NAME)_$${FULL_VERSION}_$${ARCH}.deb"; \
+	tree deb_pkg; \
 	echo "📦 Paquete generado: $(NAME)_$${FULL_VERSION}_$${ARCH}.deb"
 
 changelog-deb:
