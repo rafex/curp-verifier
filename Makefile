@@ -46,6 +46,7 @@ package-deb:
 	fi
 	@echo "📦 Empaquetando para arquitectura: $(ARCH)"
 	mkdir -p deb_pkg/usr/lib
+	chown -R 0:0 deb_pkg
 	@if [ "$(ARCH)" = "arm64" ]; then \
 		cargo build --release --target aarch64-unknown-linux-gnu; \
 		cp target/aarch64-unknown-linux-gnu/release/lib$(CRATE).$(EXT) deb_pkg/usr/lib/; \
@@ -66,7 +67,7 @@ package-deb:
 
 	@VERSION=$$(grep "^version" Cargo.toml | head -n1 | cut -d'"' -f2); \
 	FULL_VERSION=$${VERSION}-$(REVISION); \
-	DEPENDS=$$(dpkg-shlibdeps deb_pkg/usr/lib/lib$(CRATE).so 2>/dev/null | sed -n 's/^shlibs:Depends=//p'); \
+	DEPENDS=$$(ldd deb_pkg/usr/lib/lib$(CRATE).so | awk '{ if ($$3 ~ /^\//) print $$1 }' | xargs -r dpkg -S | cut -d: -f1 | sort -u | paste -sd "," -); \
 	FINAL=packaging/deb/$(ARCH)/control; \
 	cp $(TEMPLATE) $$FINAL; \
 	sed -i "s|{{PACKAGE}}|$(NAME)|g; \
@@ -128,7 +129,7 @@ lint:
 	ls -la
 	@VERSION=$$(grep "^version" Cargo.toml | head -n1 | cut -d'"' -f2); \
 	FULL_VERSION=$${VERSION}-$(REVISION); \
-	FILE="$(NAME)_$${FULL_VERSION}_$${ARCH}.deb"; \
+	FILE=$${file:-$(NAME)_$${FULL_VERSION}_$${ARCH}.deb}; \
 	if [ -f $$FILE ]; then \
 		echo "🔍 Ejecutando lintian sobre $$FILE"; \
 		lintian $$FILE; \
